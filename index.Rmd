@@ -1,0 +1,11 @@
+---
+title: "Curso ciências de dados"
+author: "Isabella"
+date: "04/10/2021"
+output: html_document
+---
+
+### Atividades da disciplina [Ciências de dados](https://cammcordeiro.github.io/ciencia_colab/index.html)
+
+### [Atividade 4](https://isabella-ferreira.github.io/CCBD_Isabella/atividade4)
+### [Atividade final](https://isabella-ferreira.github.io/CCBD_Isabella/atividadefinal)

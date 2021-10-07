@@ -1,0 +1,260 @@
+---
+title: "Atividade Final"
+author: "Isabella"
+date: "06/10/2021"
+output:
+  html_document:
+    pandoc_args: ["--number-offset=0"]
+    toc: yes
+    toc_float: true
+    number_sections: true
+---
+
+```{css, echo=FALSE}
+pre {
+  max-height: 300px;
+  overflow-y: auto;
+}
+pre[class] {
+  max-height: 200px;
+}
+```
+## Informações gerais {.unnumbered}
+
+Esse banco de dados é de um resultado de um projeto de [Ciência cidadã](https://www.instagram.com/mardetartaruga/) feito em Arraial do Cabo. A fotos recebidas foram utilizadas para identificação individual das tartarugas marinhas através do método de foto-identificação. O software utilizado para as comparações foi o Hotspotter, com intermédio do [Internet of Turtles](https://iot.wildbook.org/).
+Os dados podem ser encontrados no [Internet of Turtles](https://iot.wildbook.org/) procurando pelo ID "isabellaferreira". Para esse trabalho foram extraídos os encontros (avistamento de um único animal em um local e horário específicos) registrados até a data atual.
+
+
+* Name0.value: Identidade única para cada indivíduo
+* Occurrence.occurrenceID: Código único para cada encontro
+* Encounter.verbatimLocality: Local de coleta da foto, se NA, então a foto é de Arraial do Cabo sem definição da praia ou ponto de mergulho
+* Encounter.year: Ano da coleta da foto, formato de quatro dígitos
+* Encounter.month: Mês da coleta da foto, formato de dois dígitos
+* Encounter.day: Dia da coleta da foto, formato de dois dígitos.Dia 0 indica fotos sem dia definido.
+* Encounter.behavior: Comportamento do animal no momento do encontro
+* Encounter.genus: Gênero da espécie do encontro
+* Encounter.specificEpithet: Epíteto específico da espécie do encontro
+* Encounter.occurrenceRemarks: Lateral(is) registrada(s) no encontro, podendo ser direita (right), esquerda (left), ou ambas as laterais (both)
+* Encounter.mediaAsset0: Primeira foto do encontro, podendo ser da lateral direita ou esqueda. Obrigatória para registro do encontro.
+* Encounter.mediaAsset1: Segunda foto do encontro, sendo necessária apenas quando o encontro tem registro das duas laterais.
+
+## Pacotes usados {.unnumbered}
+
+Carregando os pacotes
+```{r,results = 'hide', message=FALSE}
+library(readxl)
+library(tidyverse)
+library(stringr)
+library(psych)
+library(lubridate)
+library(plyr)
+library(plotly)
+```
+
+## Analisando o total de indivíduos {.unnumbered}
+
+Abrindo a tabela e selecionando as colunas
+```{r,}
+originalenctable <- read_excel("encounterSearchResults_export_isabellaferreira.xls") %>%
+  select(Name0.value, Occurrence.occurrenceID, Encounter.verbatimLocality,Encounter.year,Encounter.month,Encounter.day, Encounter.behavior,Encounter.genus,Encounter.specificEpithet,Encounter.occurrenceRemarks,Encounter.mediaAsset0,Encounter.mediaAsset1)
+```
+
+Analisando a tabela
+```{r,}
+lapply(originalenctable, unique)
+```
+
+Configurando a data. Em caso de ausência do dia, foi padronizado uso do dia 15
+```{r,}
+originalenctable$Encounter.day[originalenctable$Encounter.day==0] <- 15
+tabledate <- unite(originalenctable, Encounter.year, Encounter.month, Encounter.day, col = "Date", sep = "-")
+tabledate$Date <- factor(tabledate$Date)
+tabledate$Date <- as.Date(tabledate$Date, format = "%Y-%m-%d")
+```
+
+Definindo qual(is) lateral(is) os indivíduos têm ao longo do banco de dados
+```{r,}
+tablesides <- tabledate %>%
+  filter(!is.na(Name0.value)) %>%
+  group_by(Name0.value) %>% 
+  mutate(Sides = case_when(any(str_detect(Encounter.occurrenceRemarks,"both")|n_distinct(Encounter.occurrenceRemarks) > 1) ~ 'both',
+                           TRUE ~ Encounter.occurrenceRemarks )) %>%
+  ungroup
+```
+
+Definindo quais indivíduos já foram revistos
+```{r,}
+tableresight <- tablesides %>%
+  filter(!is.na(Name0.value)) %>%
+  group_by(Name0.value) %>% 
+  mutate(Resight = case_when (any(n_distinct(Occurrence.occurrenceID) > 1) ~ 'yes',
+                           TRUE ~ 'no' ))
+```
+
+Tabela final com o número total de indivíduos
+```{r,}
+tableturtlesmax <- tableresight %>% 
+  filter(!is.na(Name0.value))
+```
+
+Número de fotos que foram avaliadas para criar esse banco de dados
+```{r,}
+tableturtlesmax %>%
+  filter(!is.na(Encounter.mediaAsset0)) %>%
+  group_by(Encounter.genus) %>% 
+  dplyr::summarise(n_distinct (Encounter.mediaAsset0))
+tableturtlesmax %>%
+  filter(!is.na(Encounter.mediaAsset1)) %>%
+  group_by(Encounter.genus) %>% 
+  dplyr::summarise(n_distinct (Encounter.mediaAsset1))
+```
+
+Contando o número de indivíduos distintos para cada espécie, de acordo com a(s) lateral(is) que os indivíduos foram registrados.
+```{r,}
+tableturtlesmax %>%
+  filter(!is.na(Name0.value)) %>%
+  filter(Encounter.genus == "Chelonia") %>%
+  distinct (Name0.value, .keep_all= TRUE) %>% 
+  group_by(Sides) %>% 
+  dplyr::summarise(count = n())
+tableturtlesmax %>%
+  filter(!is.na(Name0.value)) %>%
+  filter(Encounter.genus == "Eretmochelys") %>%
+  distinct (Name0.value, .keep_all= TRUE) %>% 
+  group_by(Sides) %>% 
+  dplyr::summarise(count = n())
+```
+
+Para evitar possível replicação de indivíduos, é preciso selecionar o número mínimo de indivíduos confirmados. Esse número é o valor dos indivíduos identificados que possuem as duas laterais 'both' somado com a lateral que mais possui indivíduos identificados. Nesse caso 'right' para C. mydas e 'left' para E. imbricata.
+```{r,}
+tableturtlesmin <-tableturtlesmax %>%
+  filter(!is.na(Name0.value)) %>%
+  filter(Sides %in% c('both', 'right') & Encounter.genus == "Chelonia" | 
+         Sides %in% c('both', 'left') & Encounter.genus == "Eretmochelys")
+```
+
+## Analisando o número mínimo de indivíduos confirmados {.unnumbered}
+
+Número de fotos por ano, para cada espécie
+```{r, fig.height = 5, fig.width = 9, fig.align = "center"}
+tableturtlesmin %>% 
+  distinct (Name0.value, .keep_all= TRUE) %>%
+  mutate(year = format(Date, "%Y")) %>%
+  group_by(year) %>%
+ggplot(., aes(x=year, fill=Encounter.genus))+
+  geom_bar(width=.8, position = position_dodge2(preserve = "single")) +
+  scale_x_discrete(name = "Ano", breaks = seq(2006, 2021, 1)) +
+  scale_y_continuous(name = "Fotos", breaks = seq(0, 100, 20),expand = c(0,0,0,1))
+```
+
+Número de Indivíduos por ano, para cada espécie
+```{r, fig.height = 5, fig.width = 7, fig.align = "center"}
+tableturtlesmin %>% 
+  distinct (Name0.value, .keep_all= TRUE) %>%
+  mutate(year = format(Date, "%Y")) %>%
+  group_by(year) %>%
+ggplot(., aes(x=year, fill= Encounter.genus))+
+  geom_bar() +
+  scale_y_continuous(name = "Indivíduos", breaks = seq(0, 110, 10), expand = c(0,0,0,15))+
+  scale_x_discrete(name = "Ano")+
+  theme(legend.position = "none")+
+  facet_grid(rows = vars(Encounter.genus),scales = "free", space = "free")
+```
+
+Quantidade e frequência de indivíduos que foram revistos
+```{r,}
+tableturtlesmin %>%
+  filter(!is.na(Encounter.mediaAsset0)) %>%
+  distinct (Name0.value, .keep_all= TRUE) %>% 
+  group_by(Encounter.genus, Resight) %>% 
+  dplyr::summarise(count = n()) %>% 
+  ungroup() %>% 
+  mutate(freq = count / sum(count))
+```
+
+Presença dos indivíduos revistos nas fotos
+```{r,}
+tableturtlesmin %>%
+  filter(!is.na(Encounter.mediaAsset0)) %>%
+  group_by(Encounter.genus, Resight) %>% 
+  dplyr::summarise(n_distinct (Encounter.mediaAsset0))
+tableturtlesmin %>%
+  filter(!is.na(Encounter.mediaAsset1)) %>%
+  group_by(Encounter.genus, Resight) %>% 
+  dplyr::summarise(n_distinct (Encounter.mediaAsset1))
+```
+
+## Análise dos indivíduos revistos {.unnumbered}
+### Histograma {.unnumbered}
+
+Filtrando apenas os indivíduos que foram revistos
+```{r,}
+turtlesresighted <- tableturtlesmin %>%
+  filter(Resight == "yes")
+```
+
+Identificando a data dos encontros
+```{r,}
+table_sum <- turtlesresighted %>%
+  group_by(Date, Name0.value, Encounter.genus) %>%
+  dplyr::summarise(count = n()) %>% 
+  mutate_at(vars(count), funs(factor))
+```
+
+Calculando o intervalo entre o primeiro e último encontro dos indivíduos.
+```{r,}
+table_range <- table_sum %>%
+  group_by(Name0.value, Encounter.genus) %>%
+  dplyr::summarise(min = min(Date),
+                   max = max(Date)) %>% 
+  ungroup() %>% 
+  mutate(diff_dias=max-min) %>% 
+  mutate(diff_meses=diff_dias/(365.25/12)) %>%
+  mutate(diff_anos=diff_dias/(365)) %>%
+  mutate_at(vars(diff_meses,diff_anos), round, 1) %>%
+  mutate_if(is.difftime,as.numeric)
+```
+
+Calculando descritores do intervalo entre o primeiro e último encontro de cada indivíduo
+```{r,}
+describeBy(table_range$diff_anos, table_range$Encounter.genus)
+median <- ddply(table_range, .(Encounter.genus), summarise, median = median(diff_anos))
+```
+
+Histograma do intervalo entre os encontros com a mediana
+```{r,fig.height = 5, fig.width = 7, fig.align = "center"}
+ggplot(table_range, aes(x=diff_anos)) + 
+  geom_histogram(binwidth= 1, alpha=.7, boundary = 0, aes(fill=Encounter.genus, color=Encounter.genus))+
+  scale_y_continuous(name = "Indivíduos",breaks = seq(0, 22, 2), expand = c(0,0,0,2))+
+  scale_x_continuous(name = "Intervalo (anos)",breaks = 1:6)+
+  geom_vline(data=median, aes(xintercept=median),
+             linetype="dashed")+
+  facet_grid (rows = vars(Encounter.genus),scales = "free", space = "free")+
+  theme(legend.position = "none")
+```
+
+### Linha do tempo {.unnumbered}
+
+Nessa etapa foi escolhido filtrar os indivíduos onde o intervalo entre o primeiro e último encontro é maior do que 12 meses.
+```{r,}
+table_range <- table_range %>%
+  filter ( diff_meses > 12 )
+```
+
+Selecionando os indivíduos de 'table_range' em 'table_sum'
+```{r,}
+table_sum_ok <- table_sum %>% 
+  filter(Name0.value %in% table_range$Name0.value)
+```
+
+Linha do tempo dos indivíduos, marcando todos os encontros
+```{r, fig.height = 7, fig.width = 8, fig.align = "center"}
+ggplotly (ggplot(table_sum_ok, aes(x = Date, y = Name0.value)) +
+  geom_segment(data = table_range, size = 1.6, alpha=.4,
+               aes(x = min, xend = max, y = Name0.value, yend = Name0.value))+
+  geom_point(aes(color=Encounter.genus), alpha=1, size=2.7) +
+  labs(x="Tempo", y="Indivíduos")+
+  scale_x_date(date_breaks = "3 months", date_labels = "%m/%Y")+
+  theme_light()+
+  theme(axis.text.x = element_text(angle = 45, hjust = .9, vjust = .9)))
+```
